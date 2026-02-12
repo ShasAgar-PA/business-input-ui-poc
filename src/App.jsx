@@ -1,7 +1,10 @@
 import { useState } from "react";
 
 function App() {
-  const [page, setPage] = useState(1);
+  const [submitted, setSubmitted] = useState(false);
+  const [submittedData, setSubmittedData] = useState(null);
+
+  const [showTable, setShowTable] = useState(false);
 
   const [header, setHeader] = useState({
     businessType: "",
@@ -93,53 +96,149 @@ function App() {
     if (!response.ok) {
       alert("Upload failed");
     } else {
-      alert("Upload successful");
+      setSubmittedData(payload);
+      setSubmitted(true);
     }
   };
 
+  const resetForm = () => {
+    setHeader({
+      businessType: "",
+      division: "",
+      year: ""
+    });
+
+    setRows(
+      Array.from({ length: 12 }, (_, i) => ({
+        month: i + 1,
+        forecast: "",
+        plan: "",
+        gm: "",
+        exCost: ""
+      }))
+    );
+
+    setShowTable(false);
+    setSubmitted(false);
+    setSubmittedData(null);
+  };
+
+  if (submitted && submittedData) {
+    return (
+      <div style={{ padding: "30px", fontFamily: "Arial" }}>
+        <h2>Submission Successful</h2>
+
+        <p>
+          Thank you for submitting data for:
+          <br />
+          <strong>
+            {submittedData.businessType} | {submittedData.division} | {submittedData.year}
+          </strong>
+        </p>
+
+        <h3>Submitted Values</h3>
+
+        <table border="1" cellPadding="8">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Forecast</th>
+              <th>Plan</th>
+              <th>GM %</th>
+              <th>Ex Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {submittedData.months
+              .filter(
+                (row) =>
+                  row.forecast || row.plan || row.gm || row.exCost
+              )
+              .map((row) => (
+                <tr key={row.month}>
+                  <td>{row.month}</td>
+                  <td>{row.forecast}</td>
+                  <td>{row.plan}</td>
+                  <td>{row.gm}</td>
+                  <td>{row.exCost}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+
+        <br />
+
+        <button onClick={resetForm}>
+          Submit Another Response
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: "30px", fontFamily: "Arial" }}>
-      {page === 1 && (
+      <h2>Business Input</h2>
+
+      {/* HEADER SECTION */}
+      <div style={{ marginBottom: "20px" }}>
+        <label>Business Type:</label><br />
+        <select
+          value={header.businessType}
+          onChange={(e) =>
+            setHeader({ ...header, businessType: e.target.value })
+          }
+        >
+          <option value="">Select</option>
+          <option value="SAF">SAF</option>
+          <option value="Retail">Retail</option>
+        </select>
+
+        <br /><br />
+
+        <label>Division:</label><br />
+        <select
+          value={header.division}
+          onChange={(e) =>
+            setHeader({ ...header, division: e.target.value })
+          }
+        >
+          <option value="">Select</option>
+          <option value="F9A">F9A</option>
+          <option value="F9B">F9B</option>
+        </select>
+
+        <br /><br />
+
+        <label>Year:</label><br />
+        <select
+          value={header.year}
+          onChange={(e) =>
+            setHeader({ ...header, year: e.target.value })
+          }
+        >
+          <option value="">Select</option>
+          <option value="2026">2026</option>
+          <option value="2027">2027</option>
+        </select>
+
+        <br /><br />
+
+        <button
+          disabled={
+            !header.businessType || !header.division || !header.year
+          }
+          onClick={() => setShowTable(true)}
+        >
+          Load Table
+        </button>
+      </div>
+
+      {/* TABLE SECTION */}
+      {showTable && (
         <>
-          <h2>Business Input - Header</h2>
-
-          <label>Business Type:</label><br/>
-          <select onChange={(e) => setHeader({ ...header, businessType: e.target.value })}>
-            <option value="">Select</option>
-            <option value="SAF">SAF</option>
-            <option value="Retail">Retail</option>
-          </select>
-
-          <br/><br/>
-
-          <label>Division:</label><br/>
-          <select onChange={(e) => setHeader({ ...header, division: e.target.value })}>
-            <option value="">Select</option>
-            <option value="F9A">F9A</option>
-            <option value="F9B">F9B</option>
-          </select>
-
-          <br/><br/>
-
-          <label>Year:</label><br/>
-          <select onChange={(e) => setHeader({ ...header, year: e.target.value })}>
-            <option value="">Select</option>
-            <option value="2026">2026</option>
-            <option value="2027">2027</option>
-          </select>
-
-          <br/><br/>
-
-          <button disabled={!header.businessType || !header.division || !header.year}
-                  onClick={() => setPage(2)}>
-            Next
-          </button>
-        </>
-      )}
-
-      {page === 2 && (
-        <>
-          <h2>Monthly Input</h2>
+          <h3>
+            Entering data for: {header.businessType} | {header.division} | {header.year}
+          </h3>
 
           <table border="1" cellPadding="8">
             <thead>
@@ -155,24 +254,26 @@ function App() {
               {rows.map((row, index) => (
                 <tr key={row.month}>
                   <td>{row.month}</td>
+
                   <td>
                     <input
-                    type="text"
-                    inputMode="decimal"
-                    value={row.forecast}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (allowOnlyValidNumber(val)) {
-                        handleRowChange(index, "forecast", val);
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (["e", "E", "+", "-"].includes(e.key)) {
-                        e.preventDefault();
-                      }
-                    }}
-                  />
+                      type="text"
+                      inputMode="decimal"
+                      value={row.forecast}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (allowOnlyValidNumber(val)) {
+                          handleRowChange(index, "forecast", val);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (["e", "E", "+", "-"].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                    />
                   </td>
+
                   <td>
                     <input
                       type="text"
@@ -191,6 +292,7 @@ function App() {
                       }}
                     />
                   </td>
+
                   <td>
                     <input
                       type="text"
@@ -209,6 +311,7 @@ function App() {
                       }}
                     />
                   </td>
+
                   <td>
                     <input
                       type="text"
@@ -232,9 +335,8 @@ function App() {
             </tbody>
           </table>
 
-          <br/>
+          <br />
 
-          <button onClick={() => setPage(1)}>Back</button>
           <button onClick={upload}>Submit</button>
         </>
       )}
