@@ -4,6 +4,8 @@ function App() {
   const [loading, setLoading] = useState(false);
 
   const upload = async () => {
+    console.log("Storage URL:", import.meta.env.VITE_STORAGE_URL);
+    console.log("SAS:", import.meta.env.VITE_BLOB_SAS);
     try {
       setLoading(true);
 
