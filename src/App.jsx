@@ -20,12 +20,57 @@ function App() {
   );
 
   const handleRowChange = (index, field, value) => {
-    const updated = [...rows];
-    updated[index][field] = value;
-    setRows(updated);
+      const updated = [...rows];
+      updated[index][field] = value;
+      setRows(updated);
+    };
+
+    const allowOnlyValidNumber = (value, max = null) => {
+    // Allow empty
+    if (value === "") return true;
+
+    // Only digits + optional decimal up to 5 places
+    const regex = /^\d*\.?\d{0,5}$/;
+    if (!regex.test(value)) return false;
+
+    const numeric = parseFloat(value);
+    if (numeric < 0) return false;
+
+    if (max !== null && numeric > max) return false;
+
+    return true;
   };
 
+  const validateRows = () => {
+    for (let row of rows) {
+      const fields = ["forecast", "plan", "gm", "exCost"];
+
+      for (let field of fields) {
+        const value = row[field];
+
+        if (value !== "") {
+          const num = parseFloat(value);
+
+          if (isNaN(num) || num < 0) {
+            return false;
+          }
+
+          if (field === "gm" && num > 100) {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  };
+
+
   const upload = async () => {
+    if (!validateRows()) {
+      alert("Invalid values detected. Please correct inputs.");
+      return;
+    }
+
     const payload = {
       ...header,
       months: rows
@@ -111,24 +156,76 @@ function App() {
                 <tr key={row.month}>
                   <td>{row.month}</td>
                   <td>
-                    <input type="number"
-                      value={row.forecast}
-                      onChange={(e) => handleRowChange(index, "forecast", e.target.value)} />
+                    <input
+                    type="text"
+                    inputMode="decimal"
+                    value={row.forecast}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (allowOnlyValidNumber(val)) {
+                        handleRowChange(index, "forecast", val);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (["e", "E", "+", "-"].includes(e.key)) {
+                        e.preventDefault();
+                      }
+                    }}
+                  />
                   </td>
                   <td>
-                    <input type="number"
+                    <input
+                      type="text"
+                      inputMode="decimal"
                       value={row.plan}
-                      onChange={(e) => handleRowChange(index, "plan", e.target.value)} />
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (allowOnlyValidNumber(val)) {
+                          handleRowChange(index, "plan", val);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (["e", "E", "+", "-"].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                    />
                   </td>
                   <td>
-                    <input type="number" min="0" max="100" step="0.01"
+                    <input
+                      type="text"
+                      inputMode="decimal"
                       value={row.gm}
-                      onChange={(e) => handleRowChange(index, "gm", e.target.value)} />
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (allowOnlyValidNumber(val, 100)) {
+                          handleRowChange(index, "gm", val);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (["e", "E", "+", "-"].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                    />
                   </td>
                   <td>
-                    <input type="number"
+                    <input
+                      type="text"
+                      inputMode="decimal"
                       value={row.exCost}
-                      onChange={(e) => handleRowChange(index, "exCost", e.target.value)} />
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (allowOnlyValidNumber(val)) {
+                          handleRowChange(index, "exCost", val);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (["e", "E", "+", "-"].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                    />
                   </td>
                 </tr>
               ))}
