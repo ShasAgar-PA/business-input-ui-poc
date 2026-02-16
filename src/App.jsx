@@ -169,6 +169,59 @@ function App() {
     setSubmittedData(null);
   };
 
+  if (!user) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          width: "100vw",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundImage: "url('/background.jpg')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          fontFamily: "'Montserrat', sans-serif"
+        }}
+      >
+        <div
+          style={{
+            background: "rgba(255,255,255,0.95)",
+            padding: "50px",
+            borderRadius: "20px",
+            width: "400px",
+            textAlign: "center",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.2)"
+          }}
+        >
+          <img
+            src="/stevemadden-logo.png"
+            alt="Steve Madden"
+            style={{ height: "60px", marginBottom: "20px" }}
+          />
+
+          <h2>Business Input Portal</h2>
+
+          <button
+            onClick={() => (window.location.href = "/.auth/login/aad")}
+            style={{
+              marginTop: "20px",
+              padding: "10px 25px",
+              borderRadius: "25px",
+              border: "none",
+              backgroundColor: "black",
+              color: "white",
+              cursor: "pointer"
+            }}
+          >
+            Login with Microsoft
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+
   if (submitted && submittedData) {
     return (
       <div
@@ -309,6 +362,21 @@ function App() {
               }}
             >
               Submit Another Response
+            </button>
+
+            <button
+              onClick={() => (window.location.href = "/.auth/logout")}
+              style={{
+                padding: "10px 25px",
+                borderRadius: "25px",
+                border: "none",
+                backgroundColor: "#999",
+                color: "white",
+                cursor: "pointer",
+                marginLeft: "15px"
+              }}
+            >
+              Logout
             </button>
           </div>
         </div>
@@ -559,6 +627,21 @@ function App() {
             }}
           >
             Submit
+          </button>
+
+          <button
+            onClick={() => (window.location.href = "/.auth/logout")}
+            style={{
+              padding: "10px 25px",
+              borderRadius: "25px",
+              border: "none",
+              backgroundColor: "#999",
+              color: "white",
+              cursor: "pointer",
+              marginLeft: "15px"
+            }}
+          >
+            Logout
           </button>
         </>
       )}
