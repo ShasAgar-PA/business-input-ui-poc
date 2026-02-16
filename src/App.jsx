@@ -1,4 +1,17 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+const [user, setUser] = useState(null);
+
+useEffect(() => {
+  fetch("/.auth/me")
+    .then(res => res.json())
+    .then(data => {
+      if (data.clientPrincipal) {
+        setUser(data.clientPrincipal);
+      }
+    })
+    .catch(err => console.error("Auth error:", err));
+}, []);
 
 function App() {
   const [submitted, setSubmitted] = useState(false);
@@ -98,6 +111,8 @@ function App() {
 
     try {
       const payload = {
+        userEmail: user?.userDetails,
+        userId: user?.userId,
         ...header,
         months: rows,
         submittedAt: new Date().toISOString()
@@ -180,6 +195,11 @@ function App() {
             boxShadow: "0 10px 30px rgba(0,0,0,0.2)"
           }}
         >
+          {user && (
+            <div style={{ textAlign: "right", marginBottom: "10px", fontSize: "14px" }}>
+              Logged in as: <strong>{user.userDetails}</strong>
+            </div>
+          )}
         <div style={{ textAlign: "center", marginBottom: "20px" }}>
           <img
             src="/stevemadden-logo.png"
@@ -321,6 +341,11 @@ function App() {
           boxShadow: "0 10px 30px rgba(0,0,0,0.2)"
         }}
       >
+        {user && (
+            <div style={{ textAlign: "right", marginBottom: "10px", fontSize: "14px" }}>
+              Logged in as: <strong>{user.userDetails}</strong>
+            </div>
+          )}
       <div style={{ textAlign: "center", marginBottom: "20px" }}>
         <img
           src="/stevemadden-logo.png"
