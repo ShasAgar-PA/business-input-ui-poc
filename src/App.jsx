@@ -1,21 +1,21 @@
 import { useState, useEffect } from "react";
 
-const [user, setUser] = useState(undefined);
-
-useEffect(() => {
-  fetch("/.auth/me")
-    .then((res) => res.json())
-    .then((data) => {
-      if (data.clientPrincipal) {
-        setUser(data.clientPrincipal);
-      }
-    })
-    .catch(() => {
-      setUser(null);
-    });
-}, []);
-
 function App() {
+  const [user, setUser] = useState(undefined);
+
+  useEffect(() => {
+    fetch("/.auth/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.clientPrincipal) {
+          setUser(data.clientPrincipal);
+        }
+      })
+      .catch(() => {
+        setUser(null);
+      });
+  }, []);
+  
   const [submitted, setSubmitted] = useState(false);
   const [submittedData, setSubmittedData] = useState(null);
 
