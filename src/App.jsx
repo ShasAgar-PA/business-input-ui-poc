@@ -1,16 +1,18 @@
 import { useState, useEffect } from "react";
 
-const [user, setUser] = useState(null);
+const [user, setUser] = useState(undefined);
 
 useEffect(() => {
   fetch("/.auth/me")
-    .then(res => res.json())
-    .then(data => {
+    .then((res) => res.json())
+    .then((data) => {
       if (data.clientPrincipal) {
         setUser(data.clientPrincipal);
       }
     })
-    .catch(err => console.error("Auth error:", err));
+    .catch(() => {
+      setUser(null);
+    });
 }, []);
 
 function App() {
@@ -169,7 +171,11 @@ function App() {
     setSubmittedData(null);
   };
 
-  if (!user) {
+  if (user === undefined) {
+    return null; // still loading
+  }
+
+  if (user === null) {
     return (
       <div
         style={{
