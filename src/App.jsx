@@ -1,7 +1,12 @@
 import { useState, useEffect } from "react";
 
 function App() {
-  const [user, setUser] = useState(undefined);
+  const [user, setUser] = useState(null);
+  // const [authChecked, setAuthChecked] = useState(false);
+  const [mode, setMode] = useState(null); 
+  // null = not chosen
+  // "guest" = anonymous
+  // "aad" = microsoft login
 
   useEffect(() => {
     fetch("/.auth/me")
@@ -9,13 +14,14 @@ function App() {
       .then((data) => {
         if (data.clientPrincipal) {
           setUser(data.clientPrincipal);
+          setMode("aad"); // automatically go to app if logged in
         }
       })
       .catch(() => {
-        setUser(null);
+        // localhost or no auth
       });
   }, []);
-  
+
   const [submitted, setSubmitted] = useState(false);
   const [submittedData, setSubmittedData] = useState(null);
 
@@ -113,8 +119,8 @@ function App() {
 
     try {
       const payload = {
-        userEmail: user?.userDetails,
-        userId: user?.userId,
+        userEmail: user ? user.userDetails : "guest@anonymous",
+        userId: user ? user.userId : `Guest_${Date.now()}`,
         ...header,
         months: rows,
         submittedAt: new Date().toISOString()
@@ -171,11 +177,7 @@ function App() {
     setSubmittedData(null);
   };
 
-  if (user === undefined) {
-    return null; // still loading
-  }
-
-  if (user === null) {
+  if (mode === null) {
     return (
       <div
         style={{
@@ -209,7 +211,9 @@ function App() {
           <h2>Business Input Portal</h2>
 
           <button
-            onClick={() => (window.location.href = "/.auth/login/aad")}
+            onClick={() => {
+              setMode("guest");
+            }}
             style={{
               marginTop: "20px",
               padding: "10px 25px",
@@ -217,7 +221,25 @@ function App() {
               border: "none",
               backgroundColor: "black",
               color: "white",
-              cursor: "pointer"
+              cursor: "pointer",
+              width: "100%"
+            }}
+          >
+            Continue as Guest
+          </button>
+
+          <button
+            onClick={() => {
+              window.location.href = "/.auth/login/aad";
+            }}
+            style={{
+              marginTop: "15px",
+              padding: "10px 25px",
+              borderRadius: "25px",
+              border: "1px solid black",
+              backgroundColor: "white",
+              cursor: "pointer",
+              width: "100%"
             }}
           >
             Login with Microsoft
@@ -254,11 +276,11 @@ function App() {
             boxShadow: "0 10px 30px rgba(0,0,0,0.2)"
           }}
         >
-          {user && (
-            <div style={{ textAlign: "right", marginBottom: "10px", fontSize: "14px" }}>
-              Logged in as: <strong>{user.userDetails}</strong>
-            </div>
-          )}
+          <div style={{ textAlign: "right", marginBottom: "10px", fontSize: "14px" }}>
+            {user
+              ? `Logged in as: ${user.userDetails}`
+              : "Guest User"}
+          </div>
         <div style={{ textAlign: "center", marginBottom: "20px" }}>
           <img
             src="/stevemadden-logo.png"
@@ -371,7 +393,11 @@ function App() {
             </button>
 
             <button
-              onClick={() => (window.location.href = "/.auth/logout")}
+              onClick={() => {
+                setUser(null);
+                setMode(null);
+                window.location.href = "/.auth/logout";
+              }}
               style={{
                 padding: "10px 25px",
                 borderRadius: "25px",
@@ -415,11 +441,11 @@ function App() {
           boxShadow: "0 10px 30px rgba(0,0,0,0.2)"
         }}
       >
-        {user && (
-            <div style={{ textAlign: "right", marginBottom: "10px", fontSize: "14px" }}>
-              Logged in as: <strong>{user.userDetails}</strong>
-            </div>
-          )}
+        <div style={{ textAlign: "right", marginBottom: "10px", fontSize: "14px" }}>
+          {user
+            ? `Logged in as: ${user.userDetails}`
+            : "Guest User"}
+        </div>
       <div style={{ textAlign: "center", marginBottom: "20px" }}>
         <img
           src="/stevemadden-logo.png"
@@ -636,7 +662,11 @@ function App() {
           </button>
 
           <button
-            onClick={() => (window.location.href = "/.auth/logout")}
+            onClick={() => {
+              setUser(null);
+              setMode(null);
+              window.location.href = "/.auth/logout";
+            }}
             style={{
               padding: "10px 25px",
               borderRadius: "25px",

@@ -1,12 +1,3 @@
 {
-  "routes": [
-    {
-      "route": "/.auth/login/aad",
-      "allowedRoles": ["anonymous"]
-    },
-    {
-      "route": "/.auth/logout",
-      "allowedRoles": ["authenticated"]
-    }
-  ]
+  "routes": []
 }
