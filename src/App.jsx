@@ -3,7 +3,15 @@ import { useState, useEffect } from "react";
 function App() {
   const [user, setUser] = useState(null);
   // const [authChecked, setAuthChecked] = useState(false);
-  const [mode, setMode] = useState(null); 
+  const [mode, setMode] = useState(() => {
+    return localStorage.getItem("appMode");
+  });
+  const [submitted, setSubmitted] = useState(false);
+  const [submittedData, setSubmittedData] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [submissionId, setSubmissionId] = useState(null);
+  const [fadeIn, setFadeIn] = useState(false);
   // null = not chosen
   // "guest" = anonymous
   // "aad" = microsoft login
@@ -15,6 +23,7 @@ function App() {
         if (data.clientPrincipal) {
           setUser(data.clientPrincipal);
           setMode("aad"); // automatically go to app if logged in
+          localStorage.setItem("appMode", "aad");
         }
       })
       .catch(() => {
@@ -22,11 +31,25 @@ function App() {
       });
   }, []);
 
-  const [submitted, setSubmitted] = useState(false);
-  const [submittedData, setSubmittedData] = useState(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [submissionId, setSubmissionId] = useState(null);
+  useEffect(() => {
+    const savedDraft = localStorage.getItem("businessInputDraft");
+
+    if (savedDraft) {
+      const parsed = JSON.parse(savedDraft);
+      if (parsed.header) setHeader(parsed.header);
+      if (parsed.rows) setRows(parsed.rows);
+    }
+  }, []);
+
+  useEffect(() => {
+    setFadeIn(false);
+
+    const timer = setTimeout(() => {
+      setFadeIn(true);
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [mode, submitted]);
 
   const downloadJSON = () => {
     if (!submittedData) return;
@@ -67,6 +90,13 @@ function App() {
       const updated = [...rows];
       updated[index][field] = value;
       setRows(updated);
+      localStorage.setItem(
+        "businessInputDraft",
+        JSON.stringify({
+          header,
+          rows: updated
+        })
+      );
     };
 
     const allowOnlyValidNumber = (value, max = null) => {
@@ -112,6 +142,84 @@ function App() {
     return rows.some(
       (row) => row.forecast || row.plan || row.gm
     );
+  };
+
+  const calculateQuarterTotals = () => {
+    const quarters = [
+      { name: "Q1", start: 0, end: 3 },
+      { name: "Q2", start: 3, end: 6 },
+      { name: "Q3", start: 6, end: 9 },
+      { name: "Q4", start: 9, end: 12 }
+    ];
+
+    const results = quarters.map((q) => {
+      let forecast = 0;
+      let plan = 0;
+      let gmTotal = 0;
+      let gmCount = 0;
+
+      rows.slice(q.start, q.end).forEach((row) => {
+        if (row.forecast) forecast += parseFloat(row.forecast);
+        if (row.plan) plan += parseFloat(row.plan);
+        if (row.gm) {
+          gmTotal += parseFloat(row.gm);
+          gmCount++;
+        }
+      });
+
+      return {
+        label: q.name,
+        forecast: forecast.toFixed(2),
+        plan: plan.toFixed(2),
+        gm: gmCount ? (gmTotal / gmCount).toFixed(2) : "0.00"
+      };
+    });
+
+    // FULL YEAR
+    let fyForecast = 0;
+    let fyPlan = 0;
+    let fyGM = 0;
+    let fyCount = 0;
+
+    rows.forEach((row) => {
+      if (row.forecast) fyForecast += parseFloat(row.forecast);
+      if (row.plan) fyPlan += parseFloat(row.plan);
+      if (row.gm) {
+        fyGM += parseFloat(row.gm);
+        fyCount++;
+      }
+    });
+
+    results.push({
+      label: "Full Year",
+      forecast: fyForecast.toFixed(2),
+      plan: fyPlan.toFixed(2),
+      gm: fyCount ? (fyGM / fyCount).toFixed(2) : "0.00"
+    });
+
+    return results;
+  };
+
+  const calculateTotals = () => {
+    let totalForecast = 0;
+    let totalPlan = 0;
+    let totalGM = 0;
+    let gmCount = 0;
+
+    rows.forEach((row) => {
+      if (row.forecast) totalForecast += parseFloat(row.forecast);
+      if (row.plan) totalPlan += parseFloat(row.plan);
+      if (row.gm) {
+        totalGM += parseFloat(row.gm);
+        gmCount++;
+      }
+    });
+
+    return {
+      forecast: totalForecast.toFixed(2),
+      plan: totalPlan.toFixed(2),
+      gm: gmCount > 0 ? (totalGM / gmCount).toFixed(2) : "0.00"
+    };
   };
 
 
@@ -162,6 +270,7 @@ function App() {
 
       setSubmittedData(payload);
       setSubmitted(true);
+      localStorage.removeItem("businessInputDraft");
       setIsUploading(false);
 
     } catch (error) {
@@ -207,7 +316,9 @@ function App() {
           backgroundImage: "url('/background.jpg')",
           backgroundSize: "cover",
           backgroundPosition: "center",
-          fontFamily: "'Montserrat', sans-serif"
+          fontFamily: "'Montserrat', sans-serif",
+          opacity: fadeIn ? 1 : 0,
+          transition: "opacity 0.4s ease-in-out"
         }}
       >
         <div
@@ -231,6 +342,7 @@ function App() {
           <button
             onClick={() => {
               setMode("guest");
+              localStorage.setItem("appMode", "guest");
             }}
             style={{
               marginTop: "20px",
@@ -282,7 +394,9 @@ function App() {
           backgroundPosition: "center",
           fontFamily: "'Montserrat', sans-serif",
           padding: "40px 20px",
-          boxSizing: "border-box"
+          boxSizing: "border-box",
+          opacity: fadeIn ? 1 : 0,
+          transition: "opacity 0.4s ease-in-out"
           }}
       >
         <div
@@ -380,6 +494,81 @@ function App() {
                   <td style={{ padding: "10px",border: "1px solid #000" }}>{row.gm}</td>
                 </tr>
               ))}
+              {(() => {
+                const tempRows = submittedData.months;
+
+                const calculateSuccessTotals = () => {
+                  const quarters = [
+                    { name: "Q1", start: 0, end: 3 },
+                    { name: "Q2", start: 3, end: 6 },
+                    { name: "Q3", start: 6, end: 9 },
+                    { name: "Q4", start: 9, end: 12 }
+                  ];
+
+                  const results = quarters.map((q) => {
+                    let forecast = 0;
+                    let plan = 0;
+                    let gmTotal = 0;
+                    let gmCount = 0;
+
+                    tempRows.slice(q.start, q.end).forEach((row) => {
+                      if (row.forecast) forecast += parseFloat(row.forecast);
+                      if (row.plan) plan += parseFloat(row.plan);
+                      if (row.gm) {
+                        gmTotal += parseFloat(row.gm);
+                        gmCount++;
+                      }
+                    });
+
+                    return {
+                      label: q.name,
+                      forecast: forecast.toFixed(2),
+                      plan: plan.toFixed(2),
+                      gm: gmCount ? (gmTotal / gmCount).toFixed(2) : "0.00"
+                    };
+                  });
+
+                  let fyForecast = 0;
+                  let fyPlan = 0;
+                  let fyGM = 0;
+                  let fyCount = 0;
+
+                  tempRows.forEach((row) => {
+                    if (row.forecast) fyForecast += parseFloat(row.forecast);
+                    if (row.plan) fyPlan += parseFloat(row.plan);
+                    if (row.gm) {
+                      fyGM += parseFloat(row.gm);
+                      fyCount++;
+                    }
+                  });
+
+                  results.push({
+                    label: "Full Year",
+                    forecast: fyForecast.toFixed(2),
+                    plan: fyPlan.toFixed(2),
+                    gm: fyCount ? (fyGM / fyCount).toFixed(2) : "0.00"
+                  });
+
+                  return results;
+                };
+
+                return calculateSuccessTotals().map((totalRow) => (
+                  <tr
+                    key={totalRow.label}
+                    style={{
+                      backgroundColor: "#f2f2f2",
+                      fontWeight: "bold"
+                    }}
+                  >
+                    <td style={{ padding: "10px", border: "1px solid #000" }}>
+                      {totalRow.label}
+                    </td>
+                    <td style={{ border: "1px solid #000" }}>{totalRow.forecast}</td>
+                    <td style={{ border: "1px solid #000" }}>{totalRow.plan}</td>
+                    <td style={{ border: "1px solid #000" }}>{totalRow.gm}</td>
+                  </tr>
+                ));
+              })()}
           </tbody>
         </table>
       </div>
@@ -418,6 +607,7 @@ function App() {
               onClick={() => {
                 setUser(null);
                 setMode(null);
+                localStorage.removeItem("appMode");
                 window.location.href = "/.auth/logout";
               }}
               style={{
@@ -451,7 +641,9 @@ function App() {
         backgroundPosition: "center",
         fontFamily: "'Montserrat', sans-serif",
         padding: "40px 20px",
-        boxSizing: "border-box"
+        boxSizing: "border-box",
+        opacity: fadeIn ? 1 : 0,
+        transition: "opacity 0.4s ease-in-out"
       }}
     >
       <div
@@ -483,9 +675,22 @@ function App() {
         <label>Business Type:</label><br />
         <select
           value={header.businessType}
-          onChange={(e) =>
-            setHeader({ ...header, businessType: e.target.value })
-          }
+          onChange={(e) => {
+            const updatedHeader = {
+              ...header,
+              businessType: e.target.value
+            };
+
+            setHeader(updatedHeader);
+
+            localStorage.setItem(
+              "businessInputDraft",
+              JSON.stringify({
+                header: updatedHeader,
+                rows
+              })
+            );
+          }}
         >
           <option value="">Select</option>
           <option value="SAF">SAF</option>
@@ -497,9 +702,22 @@ function App() {
         <label>Division:</label><br />
         <select
           value={header.division}
-          onChange={(e) =>
-            setHeader({ ...header, division: e.target.value })
-          }
+          onChange={(e) => {
+            const updatedHeader = {
+              ...header,
+              division: e.target.value
+            };
+
+            setHeader(updatedHeader);
+
+            localStorage.setItem(
+              "businessInputDraft",
+              JSON.stringify({
+                header: updatedHeader,
+                rows
+              })
+            );
+          }}
         >
           <option value="">Select</option>
           <option value="F9A">F9A</option>
@@ -511,9 +729,22 @@ function App() {
         <label>Year:</label><br />
         <select
           value={header.year}
-          onChange={(e) =>
-            setHeader({ ...header, year: e.target.value })
-          }
+          onChange={(e) => {
+            const updatedHeader = {
+              ...header,
+              year: e.target.value
+            };
+
+            setHeader(updatedHeader);
+
+            localStorage.setItem(
+              "businessInputDraft",
+              JSON.stringify({
+                header: updatedHeader,
+                rows
+              })
+            );
+          }}
         >
           <option value="">Select</option>
           <option value="2026">2026</option>
@@ -664,6 +895,20 @@ function App() {
                   </td>
                 </tr>
               ))}
+              {calculateQuarterTotals().map((totalRow) => (
+                <tr
+                  key={totalRow.label}
+                  style={{
+                    backgroundColor: "#f2f2f2",
+                    fontWeight: "bold"
+                  }}
+                >
+                  <td style={{ padding: "10px" }}>{totalRow.label}</td>
+                  <td>{totalRow.forecast}</td>
+                  <td>{totalRow.plan}</td>
+                  <td>{totalRow.gm}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -694,6 +939,7 @@ function App() {
             onClick={() => {
               setUser(null);
               setMode(null);
+              localStorage.removeItem("appMode");
               window.location.href = "/.auth/logout";
             }}
             style={{
