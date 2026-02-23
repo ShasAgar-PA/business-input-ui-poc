@@ -24,6 +24,9 @@ function App() {
 
   const [submitted, setSubmitted] = useState(false);
   const [submittedData, setSubmittedData] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [submissionId, setSubmissionId] = useState(null);
 
   const downloadJSON = () => {
     if (!submittedData) return;
@@ -105,8 +108,15 @@ function App() {
     return true;
   };
 
+  const hasAnyData = () => {
+    return rows.some(
+      (row) => row.forecast || row.plan || row.gm
+    );
+  };
+
 
   const upload = async () => {
+    setIsUploading(true);
     if (!validateRows()) {
       alert("Invalid values detected. Please correct inputs.");
       return;
@@ -117,8 +127,12 @@ function App() {
       return;
     }
 
+    const newSubmissionId = crypto.randomUUID();
+    setSubmissionId(newSubmissionId);
+
     try {
       const payload = {
+        submissionId: newSubmissionId,
         userEmail: user ? user.userDetails : "guest@anonymous",
         userId: user ? user.userId : `Guest_${Date.now()}`,
         ...header,
@@ -148,8 +162,10 @@ function App() {
 
       setSubmittedData(payload);
       setSubmitted(true);
+      setIsUploading(false);
 
     } catch (error) {
+      setIsUploading(false);
       console.error("Upload error:", error);
       alert("Upload crashed. Check console.");
     }
@@ -175,6 +191,8 @@ function App() {
     setShowTable(false);
     setSubmitted(false);
     setSubmittedData(null);
+    setSubmissionId(null);
+    setIsUploading(false);
   };
 
   if (mode === null) {
@@ -289,6 +307,10 @@ function App() {
           />
         </div>
         <h2>Submission Successful</h2>
+
+        <p>
+          <strong>Submission ID:</strong> {submissionId}
+        </p>
 
         <p>
           Thank you for submitting data for:
@@ -648,7 +670,13 @@ function App() {
           <br />
 
           <button
-            onClick={upload}
+            onClick={() => {
+              if (!hasAnyData()) {
+                alert("Please enter at least one value before submitting.");
+                return;
+              }
+              setShowConfirmModal(true);
+            }}
             style={{
               padding: "10px 25px",
               borderRadius: "25px",
@@ -657,8 +685,9 @@ function App() {
               color: "white",
               cursor: "pointer"
             }}
+            disabled={isUploading}
           >
-            Submit
+            {isUploading ? "Uploading..." : "Submit"}
           </button>
 
           <button
@@ -679,6 +708,66 @@ function App() {
           >
             Logout
           </button>
+          {showConfirmModal && (
+            <div
+              style={{
+                position: "fixed",
+                top: 0,
+                left: 0,
+                width: "100vw",
+                height: "100vh",
+                backgroundColor: "rgba(0,0,0,0.4)",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                zIndex: 1000
+              }}
+            >
+              <div
+                style={{
+                  background: "white",
+                  padding: "30px",
+                  borderRadius: "15px",
+                  width: "400px",
+                  textAlign: "center"
+                }}
+              >
+                <h3>Confirm Submission</h3>
+                <p>Are you sure you want to submit this data?</p>
+
+                <button
+                  onClick={() => setShowConfirmModal(false)}
+                  style={{
+                    marginRight: "15px",
+                    padding: "8px 20px",
+                    borderRadius: "20px",
+                    border: "1px solid black",
+                    background: "white",
+                    cursor: "pointer"
+                  }}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  onClick={() => {
+                    setShowConfirmModal(false);
+                    upload();
+                  }}
+                  style={{
+                    padding: "8px 20px",
+                    borderRadius: "20px",
+                    border: "none",
+                    background: "black",
+                    color: "white",
+                    cursor: "pointer"
+                  }}
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
       </div>
