@@ -4,28 +4,39 @@
   This is a React Single Page Application (SPA) that:
 
   1. Allows user login (Guest or Microsoft AAD)
-  2. Lets users enter monthly forecast / plan / GM data
-  3. Automatically calculates quarterly + full year totals
-  4. Saves draft locally (LocalStorage)
-  5. Uploads final JSON to Azure Blob Storage
-  6. Shows submission success page with download option
+  2. Checks user role from blob storage after login
+  3. Redirects Admin users to Admin Console
+  4. Lets editors/guests enter monthly forecast / plan / GM data
+  5. Automatically calculates quarterly + full year totals
+  6. Saves draft locally (LocalStorage)
+  7. Uploads final JSON to Azure Blob Storage
+  8. Shows submission success page with download option
 
-  The UI has 3 major states:
-    - Mode Selection Page
-    - Main Form Page
+  The UI has 4 major states:
+    - Mode Selection Page   (mode === null)
+    - Admin Console Page    (mode === "aad" && userRole === "admin")
+    - Main Form Page        (mode === "guest" || mode === "aad")
     - Submission Success Page
 
+  CHANGES FROM ORIGINAL:
+    - Imported AdminConsole component
+    - Imported getUserRole from adminStorage
+    - Added userRole state
+    - Added role fetch after AAD login
+    - Added Admin Console render condition
+    - Added handleLogout shared function
 *****************************************************************************************/
+
 import { useState, useEffect } from "react";
 import { calculateTotals } from "./utils/calculations";
+import { getUserRole, appendAuditLog } from "./utils/adminStorage";
+import AdminConsole from "./components/AdminConsole";
 
 function App() {
   /*****************************************************************************************
     SECTION 1 — GLOBAL STATE VARIABLES
-    ----------------------------------------------------------------------------------------
-    These control application behavior and UI state.
   *****************************************************************************************/
-  
+
   // Stores logged-in Microsoft user (if exists)
   const [user, setUser] = useState(null);
 
@@ -36,6 +47,17 @@ function App() {
   const [mode, setMode] = useState(() => {
     return localStorage.getItem("appMode");
   });
+
+  // NEW — stores the role of the logged-in user
+  // "admin"  → redirected to Admin Console
+  // "editor" → normal form access
+  // "viewer" → normal form access (read only in future)
+  // "guest"  → normal form access
+  const [userRole, setUserRole] = useState(null);
+
+  // NEW — true while we are fetching the user's role after login
+  // Prevents flickering of form before role is known
+  const [roleLoading, setRoleLoading] = useState(false);
 
   // True when submission completed
   const [submitted, setSubmitted] = useState(false);
@@ -57,7 +79,7 @@ function App() {
 
   // Controls whether table is visible
   const [showTable, setShowTable] = useState(false);
-  
+
   // Reusable Drop Down Style
   const modernSelectStyle = {
     width: "260px",
@@ -67,7 +89,7 @@ function App() {
     backgroundColor: "white",
     fontSize: "14px",
     outline: "none",
-    appearance: "none",        // Removes default OS styling
+    appearance: "none",
     WebkitAppearance: "none",
     MozAppearance: "none",
     boxShadow: "0 2px 6px rgba(0,0,0,0.05)",
@@ -75,7 +97,7 @@ function App() {
     cursor: "pointer"
   };
 
-  // Resuable Cell Style
+  // Reusable Cell Style
   const cellStyle = {
     padding: "10px",
     border: "1px solid #000"
@@ -109,21 +131,41 @@ function App() {
     ----------------------------------------------------------------------------------------
     On first load:
     - Calls Azure Static Web App auth endpoint
-    - If logged in → auto set mode to "aad"
+    - If logged in → fetch role → set mode to "aad"
+
+    CHANGE FROM ORIGINAL:
+    - After confirming AAD login, we now call getUserRole()
+    - If role is "admin" → userRole state is set to "admin"
+    - This triggers Admin Console render instead of form
   *****************************************************************************************/
 
   useEffect(() => {
     fetch("/.auth/me")
       .then((res) => res.json())
-      .then((data) => {
+      .then(async (data) => {
         if (data.clientPrincipal) {
-          setUser(data.clientPrincipal);
-          setMode("aad"); // automatically go to app if logged in
+          const loggedInUser = data.clientPrincipal;
+          setUser(loggedInUser);
+          setMode("aad");
           localStorage.setItem("appMode", "aad");
+
+          // NEW — fetch role from blob storage
+          setRoleLoading(true);
+          const role = await getUserRole(loggedInUser.userDetails);
+          setUserRole(role);
+          setRoleLoading(false);
+
+          // NEW — log login event to audit log
+          await appendAuditLog({
+            action:      "login",
+            performedBy: loggedInUser.userDetails,
+            details:     `Logged in via Microsoft SSO`,
+            division:    "—"
+          });
         }
       })
       .catch(() => {
-        // localhost or no auth
+        // localhost or no auth — stays as guest
       });
   }, []);
 
@@ -133,11 +175,10 @@ function App() {
 
   useEffect(() => {
     const savedDraft = localStorage.getItem("businessInputDraft");
-
     if (savedDraft) {
       const parsed = JSON.parse(savedDraft);
       if (parsed.header) setHeader(parsed.header);
-      if (parsed.rows) setRows(parsed.rows);
+      if (parsed.rows)   setRows(parsed.rows);
     }
   }, []);
 
@@ -147,82 +188,59 @@ function App() {
 
   useEffect(() => {
     setFadeIn(false);
-
-    const timer = setTimeout(() => {
-      setFadeIn(true);
-    }, 50);
-
+    const timer = setTimeout(() => setFadeIn(true), 50);
     return () => clearTimeout(timer);
-  }, [mode, submitted]);
+  }, [mode, submitted, userRole]);
 
-  //prevents background scrolling when modal is open.
+  // Prevent background scroll when modal open
   useEffect(() => {
-    if (showConfirmModal) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "auto";
-    }
+    document.body.style.overflow = showConfirmModal ? "hidden" : "auto";
   }, [showConfirmModal]);
 
   /*****************************************************************************************
     SECTION 7 — ROW INPUT HANDLER
-    ----------------------------------------------------------------------------------------
-    Updates row value and saves draft to localStorage
   *****************************************************************************************/
 
   const handleRowChange = (index, field, value) => {
-      const updated = [...rows];
-      updated[index][field] = value;
-      setRows(updated);
-      localStorage.setItem(
-        "businessInputDraft",
-        JSON.stringify({
-          header,
-          rows: updated
-        })
-      );
-    };
-  
+    const updated = [...rows];
+    updated[index][field] = value;
+    setRows(updated);
+    localStorage.setItem(
+      "businessInputDraft",
+      JSON.stringify({ header, rows: updated })
+    );
+  };
+
   /*****************************************************************************************
     SECTION 8 — VALIDATION FUNCTION
-    ----------------------------------------------------------------------------------------
-    Ensures:
-    - Only numbers
-    - No negatives
-    - GM ≤ 100
   *****************************************************************************************/
 
   const allowOnlyValidNumber = (value, max = null) => {
-    // Allow empty
     if (value === "") return true;
-
-    // Only digits + optional decimal up to 5 places
     const regex = /^\d*\.?\d{0,5}$/;
     if (!regex.test(value)) return false;
-
     const numeric = parseFloat(value);
     if (numeric < 0) return false;
-
     if (max !== null && numeric > max) return false;
-
     return true;
-  };  
+  };
 
   /*****************************************************************************************
     SECTION 9 — UPLOAD TO AZURE BLOB STORAGE
-    ----------------------------------------------------------------------------------------
-    Converts form into JSON and uploads using SAS token.
   *****************************************************************************************/
 
   const upload = async () => {
     setIsUploading(true);
+
     if (!validateRows()) {
       alert("Invalid values detected. Please correct inputs.");
+      setIsUploading(false);
       return;
     }
 
     if (!import.meta.env.VITE_STORAGE_URL || !import.meta.env.VITE_BLOB_SAS) {
       alert("Environment variables missing. Check .env file.");
+      setIsUploading(false);
       return;
     }
 
@@ -233,9 +251,9 @@ function App() {
       const payload = {
         submissionId: newSubmissionId,
         userEmail: user ? user.userDetails : "guest@anonymous",
-        userId: user ? user.userId : `Guest_${Date.now()}`,
+        userId:    user ? user.userId : `Guest_${Date.now()}`,
         ...header,
-        months: rows,
+        months:      rows,
         submittedAt: new Date().toISOString()
       };
 
@@ -256,8 +274,17 @@ function App() {
       if (!response.ok) {
         const text = await response.text();
         alert("Upload failed: " + text);
+        setIsUploading(false);
         return;
       }
+
+      // NEW — log submission to audit log
+      await appendAuditLog({
+        action:      "submit",
+        performedBy: user?.userDetails || "guest@anonymous",
+        details:     `Business Input – ${header.businessType} | ${header.division} | ${header.year}`,
+        division:    header.division
+      });
 
       setSubmittedData(payload);
       setSubmitted(true);
@@ -273,17 +300,10 @@ function App() {
 
   /*****************************************************************************************
     SECTION 10 — RESET FORM
-    ----------------------------------------------------------------------------------------
-    Clears everything and returns to initial form state.
   *****************************************************************************************/
 
   const resetForm = () => {
-    setHeader({
-      businessType: "",
-      division: "",
-      year: ""
-    });
-
+    setHeader({ businessType: "", division: "", year: "" });
     setRows(
       Array.from({ length: 12 }, (_, i) => ({
         month: i + 1,
@@ -292,7 +312,6 @@ function App() {
         gm: ""
       }))
     );
-
     setShowTable(false);
     setSubmitted(false);
     setSubmittedData(null);
@@ -301,375 +320,270 @@ function App() {
   };
 
   /*****************************************************************************************
-    SECTION 11 FUNCTION: downloadJSON
+    SECTION 11 — NEW: SHARED LOGOUT HANDLER
     ----------------------------------------------------------------------------------------
-    Purpose:
-      Allows the user to download the submitted payload as a formatted JSON file.
+    Extracted into a shared function so both the main form AND the Admin Console
+    can call the same logout logic.
+  *****************************************************************************************/
 
-    Why this exists:
-      - Gives user a local backup of what was submitted
-      - Useful for audit, sharing, or offline record keeping
-      - Avoids requiring backend re-fetch
+  const handleLogout = () => {
+    setUser(null);
+    setMode(null);
+    setUserRole(null);
+    localStorage.removeItem("appMode");
+    window.location.href = "/.auth/logout";
+  };
 
-    How it works:
-      1. Converts JS object → JSON string
-      2. Creates a Blob object
-      3. Generates temporary browser URL
-      4. Programmatically triggers file download
-      5. Cleans up memory
-
-    Safety:
-      - Does nothing if submittedData is null
+  /*****************************************************************************************
+    SECTION 12 — DOWNLOAD JSON
   *****************************************************************************************/
 
   const downloadJSON = () => {
     if (!submittedData) return;
-
     const blob = new Blob(
       [JSON.stringify(submittedData, null, 2)],
       { type: "application/json" }
     );
-
     const url = URL.createObjectURL(blob);
-
     const a = document.createElement("a");
     a.href = url;
     a.download = `submission_${submittedData.year}.json`;
     a.click();
-
     URL.revokeObjectURL(url);
   };
 
   /*****************************************************************************************
-    SECTION 12 FUNCTION: validateRows
-    ----------------------------------------------------------------------------------------
-    Purpose:
-      Performs full validation on all monthly row inputs before submission.
-
-    What it validates:
-      - Only numeric values allowed
-      - No negative numbers
-      - GM % must not exceed 100
-      - Empty fields are allowed
-
-    Why this exists:
-      - Prevents corrupt or invalid financial data
-      - Ensures backend receives clean data
-      - Protects business logic integrity
-
-    Returns:
-      true  → all rows valid
-      false → at least one invalid value detected
+    SECTION 13 — VALIDATE ROWS
   *****************************************************************************************/
 
   const validateRows = () => {
-
-    // Iterate through each month row
     for (let row of rows) {
-      const fields = ["forecast", "plan", "gm"];
-
-      // Validate each numeric field in the row
-      for (let field of fields) {
+      for (let field of ["forecast", "plan", "gm"]) {
         const value = row[field];
-
-        // Only validate if user entered something
         if (value !== "") {
           const num = parseFloat(value);
-
-          // Reject if not a number or negative
-          if (isNaN(num) || num < 0) {
-            return false;
-          }
-
-          // Additional validation rule for GM %
-          if (field === "gm" && num > 100) {
-            return false;
-          }
+          if (isNaN(num) || num < 0) return false;
+          if (field === "gm" && num > 100) return false;
         }
       }
     }
-    // If no validation errors found
     return true;
   };
 
   /*****************************************************************************************
-    SECTION 13 FUNCTION: hasAnyData
-    ----------------------------------------------------------------------------------------
-    Purpose:
-      Checks whether user has entered at least one value in the table.
-
-    Why this exists:
-      - Prevents empty submissions
-      - Avoids unnecessary uploads
-      - Improves UX (alerts user before submission)
-
-    Logic:
-      Returns true if ANY row contains at least one filled field.
+    SECTION 14 — HAS ANY DATA
   *****************************************************************************************/
 
   const hasAnyData = () => {
-    return rows.some(
-      (row) => row.forecast || row.plan || row.gm
-    );
+    return rows.some((row) => row.forecast || row.plan || row.gm);
   };
 
-  // Get month name instead of number for Better UI 
+  // Month name helper
   const getMonthName = (monthNumber) => {
     const months = [
       "January", "February", "March",
-      "April", "May", "June",
-      "July", "August", "September",
+      "April",   "May",      "June",
+      "July",    "August",   "September",
       "October", "November", "December"
     ];
     return months[monthNumber - 1];
   };
 
   /*****************************************************************************************
-    SECTION 14 — PAGE RENDERING LOGIC
+    SECTION 15 — PAGE RENDERING LOGIC
     ----------------------------------------------------------------------------------------
-    React conditionally renders 3 main UI states:
-      1. Mode Selection Page
-      2. Main Form Page
-      3. Submission Success Page
+    Order of checks:
+      1. mode === null           → Mode Selection Page
+      2. roleLoading             → Loading spinner (prevents flicker)
+      3. userRole === "admin"    → Admin Console         ← NEW
+      4. submitted               → Success Page
+      5. default                 → Main Form Page
   *****************************************************************************************/
 
   /*****************************************************************************************
     MODE SELECTION PAGE
-    ----------------------------------------------------------------------------------------
-    This page is shown ONLY when:
-        mode === null
-
-    Meaning:
-        - User has not selected Guest
-        - User has not logged in via Microsoft
-        - App just loaded OR localStorage has no saved mode
-
-    This is the "Entry Screen" of the application.
   *****************************************************************************************/
   if (mode === null) {
-
-    /***************************************************************************************
-      OUTER FULL-SCREEN CONTAINER
-      --------------------------------------------------------------------------------------
-      This div:
-        - Covers entire viewport (100vw x 100vh)
-        - Displays background image
-        - Centers the white card in middle of screen
-        - Applies fade-in animation
-    ***************************************************************************************/
     return (
       <div
         style={{
-          minHeight: "100vh", /* Makes container at least full viewport height */
-          width: "100vw", /* Makes container full viewport width */
-          display: "flex", /* Enables flexbox layout */
-          justifyContent: "center", /* Horizontally centers inner white card */
-          alignItems: "center", /* Vertically centers inner white card */
-          backgroundImage: "url('/background.jpg')", /* Background image of application */
-          backgroundSize: "cover", /* Ensures image covers entire screen */
-          backgroundPosition: "center", /* Ensures image covers entire screen */
-          fontFamily: "'Montserrat', sans-serif",  /* Global font family */
-          opacity: fadeIn ? 1 : 0, /* Fade-in opacity animation */
-          transition: "opacity 0.4s ease, transform 0.4s ease", /* Smooth fade + slide transition */
-          transform: fadeIn ? "translateY(0px)" : "translateY(10px)" /* Slight upward slide effect during appearance */
+          minHeight: "100vh",
+          width: "100vw",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundImage: "url('/background.jpg')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          fontFamily: "'Montserrat', sans-serif",
+          opacity: fadeIn ? 1 : 0,
+          transition: "opacity 0.4s ease, transform 0.4s ease",
+          transform: fadeIn ? "translateY(0px)" : "translateY(10px)"
         }}
       >
-        {/***********************************************************************************
-          WHITE CARD CONTAINER
-          ----------------------------------------------------------------------------------
-          This is the centered login box.
-          It sits inside the full-screen background container.
-        ***********************************************************************************/}
         <div
           style={{
-            background: "rgba(255,255,255,0.95)", /* Slightly transparent white background */
-            padding: "50px",/* Internal spacing around content */
-            borderRadius: "20px", /* Rounded corners */
-            width: "400px",/* Fixed width for login card */
-            textAlign: "center", /* Center-align text inside card */
-            boxShadow: "0 20px 60px rgba(0,0,0,0.15)", /* Soft shadow for floating card effect */
-            backdropFilter: "blur(8px)", /* Glass blur effect on background behind card */
+            background: "rgba(255,255,255,0.95)",
+            padding: "50px",
+            borderRadius: "20px",
+            width: "400px",
+            textAlign: "center",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+            backdropFilter: "blur(8px)"
           }}
         >
-          {/*********************************************************************************
-            LOGO SECTION
-            --------------------------------------------------------------------------------
-            Displays company branding at top of card.
-          *********************************************************************************/}
           <img
             src="/stevemadden-logo.png"
             alt="Steve Madden"
             style={{ height: "60px", marginBottom: "20px" }}
           />
-          {/* TITLE SECTION*/}
           <h2>Business Input Portal</h2>
-          
-          {/*********************************************************************************
-            BUTTON 1 — CONTINUE AS GUEST
-            --------------------------------------------------------------------------------
-            Action:
-              - Sets mode to "guest"
-              - Saves selection in localStorage
-              - Triggers re-render
-              - App moves to main form page
-          *********************************************************************************/}
+
           <button
             onClick={() => {
-              setMode("guest"); // Update state
-              localStorage.setItem("appMode", "guest"); // Persist selection so refresh keeps user in guest mode
+              setMode("guest");
+              setUserRole("guest");
+              localStorage.setItem("appMode", "guest");
             }}
             style={{
-              marginTop: "20px", // Space above button
-              padding: "10px 25px", // Space above button
-              borderRadius: "25px", // Internal spacing
-              border: "none", // No border
-              backgroundColor: "black", // Black background
-              color: "white", // White text
-              cursor: "pointer", // White text
-              width: "100%" // Full width inside card
+              marginTop: "20px",
+              padding: "10px 25px",
+              borderRadius: "25px",
+              border: "none",
+              backgroundColor: "black",
+              color: "white",
+              cursor: "pointer",
+              width: "100%",
+              fontFamily: "inherit"
             }}
           >
             Continue as Guest
           </button>
 
-          {/*********************************************************************************
-            BUTTON 2 — LOGIN WITH MICROSOFT
-            --------------------------------------------------------------------------------
-            Action:
-              - Redirects to Azure Static Web App authentication endpoint
-              - After login, Azure returns to app with authenticated user
-              - Mode automatically becomes "aad" via useEffect
-          *********************************************************************************/}
           <button
             onClick={() => {
-              window.location.href = "/.auth/login/aad"; // Redirect to Microsoft AAD login
+              window.location.href = "/.auth/login/aad";
             }}
             style={{
-              marginTop: "15px", // Space between buttons
-              padding: "10px 25px", // Internal spacing
-              borderRadius: "25px", // Pill shape
-              border: "1px solid black", // Outline style
-              backgroundColor: "white", // Outline style
-              cursor: "pointer", // Pointer cursor
-              width: "100%" // Full width inside card
+              marginTop: "15px",
+              padding: "10px 25px",
+              borderRadius: "25px",
+              border: "1px solid black",
+              backgroundColor: "white",
+              cursor: "pointer",
+              width: "100%",
+              fontFamily: "inherit"
             }}
           >
             Login with Microsoft
           </button>
-
-          {/* END WHITE CARD CONTAINER */}
         </div>
-
-        {/* END FULL SCREEN CONTAINER */}
       </div>
     );
   }
 
   /*****************************************************************************************
-    SUBMISSION SUCCESS PAGE
+    NEW — ROLE LOADING SPINNER
     ----------------------------------------------------------------------------------------
-    This page renders ONLY when:
-
-        submitted === true
-        AND
-        submittedData exists
-
-    Meaning:
-        - Upload to Azure was successful
-        - Payload has been saved
-        - We now show confirmation + summary
-
-    This acts as:
-        - Confirmation screen
-        - Audit preview
-        - Download screen
+    Shown briefly after AAD login while we fetch the user's role from blob.
+    Prevents the form from flashing before we know if user is admin or not.
   *****************************************************************************************/
-  if (submitted && submittedData) {
-
-    /***************************************************************************************
-      OUTER FULL-SCREEN CONTAINER
-      --------------------------------------------------------------------------------------
-      Responsibilities:
-        - Covers entire viewport
-        - Displays background image
-        - Adds padding around centered card
-        - Handles fade-in animation
-    ***************************************************************************************/
+  if (mode === "aad" && roleLoading) {
     return (
       <div
         style={{
-          minHeight: "100vh", // Full viewport height
-          width: "100vw", // Full viewport width
-          display: "flex", // Flexbox for centering
-          justifyContent: "center", // Horizontal center
-          backgroundImage: "url('/background.jpg')", // Background image
-          backgroundSize: "cover", // Background image
+          minHeight: "100vh",
+          width: "100vw",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundImage: "url('/background.jpg')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          fontFamily: "'Montserrat', sans-serif"
+        }}
+      >
+        <div
+          style={{
+            background: "rgba(255,255,255,0.95)",
+            padding: "40px 50px",
+            borderRadius: "20px",
+            textAlign: "center",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+            backdropFilter: "blur(8px)"
+          }}
+        >
+          <img
+            src="/stevemadden-logo.png"
+            alt="Steve Madden"
+            style={{ height: "50px", marginBottom: "20px" }}
+          />
+          <p style={{ color: "#555", fontSize: "14px" }}>Checking permissions...</p>
+        </div>
+      </div>
+    );
+  }
+
+  /*****************************************************************************************
+    NEW — ADMIN CONSOLE PAGE
+    ----------------------------------------------------------------------------------------
+    Rendered when:
+      - User is logged in via AAD
+      - Their email maps to role "admin" in users.json in blob
+
+    Passes:
+      - user object (for display + audit logging)
+      - onLogout handler (shared logout function)
+  *****************************************************************************************/
+  if (mode === "aad" && userRole === "admin") {
+    return <AdminConsole user={user} onLogout={handleLogout} />;
+  }
+
+  /*****************************************************************************************
+    SUBMISSION SUCCESS PAGE
+  *****************************************************************************************/
+  if (submitted && submittedData) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          width: "100vw",
+          display: "flex",
+          justifyContent: "center",
+          backgroundImage: "url('/background.jpg')",
+          backgroundSize: "cover",
           backgroundRepeat: "no-repeat",
           backgroundPosition: "center",
           fontFamily: "'Montserrat', sans-serif",
-          padding: "40px 20px", // Space around white card
+          padding: "40px 20px",
           boxSizing: "border-box",
-          /* Fade animation */
           opacity: fadeIn ? 1 : 0,
           transition: "opacity 0.4s ease, transform 0.4s ease",
           transform: fadeIn ? "translateY(0px)" : "translateY(10px)"
-          }}
+        }}
       >
-        {/***********************************************************************************
-          MAIN WHITE CARD CONTAINER
-          ----------------------------------------------------------------------------------
-          This is the central confirmation card.
-          Contains:
-            - User info
-            - Submission ID
-            - Summary
-            - Table
-            - Action buttons
-        ***********************************************************************************/}
         <div
           style={{
-            background: "rgba(255,255,255,0.88)", // Semi-transparent white
-            padding: "40px", // Internal spacing
-            borderRadius: "20px",  // Rounded corners
-            width: "1000px", // Rounded corners
-            boxShadow: "0 20px 60px rgba(0,0,0,0.15)",  // Soft shadow
-            backdropFilter: "blur(8px)", // Glass blur effect
+            background: "rgba(255,255,255,0.88)",
+            padding: "40px",
+            borderRadius: "20px",
+            width: "1000px",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+            backdropFilter: "blur(8px)"
           }}
         >
-          {/*********************************************************************************
-            USER INFO (TOP RIGHT)
-            --------------------------------------------------------------------------------
-            Displays logged in email OR Guest User.
-          *********************************************************************************/}
           <div style={{ textAlign: "right", marginBottom: "10px", fontSize: "14px" }}>
-            {user
-              ? `Logged in as: ${user.userDetails}`
-              : "Guest User"}
+            {user ? `Logged in as: ${user.userDetails}` : "Guest User"}
           </div>
-          {/*********************************************************************************
-            LOGO CENTERED
-          *********************************************************************************/}
-          <div style={{ textAlign: "center", marginBottom: "20px" }}>
-            <img
-              src="/stevemadden-logo.png"
-              alt="Steve Madden"
-              style={{ height: "60px" }}
-            />
-          </div>
-          {/*********************************************************************************
-            SUCCESS MESSAGE SECTION
-          *********************************************************************************/}
-          <h2>Submission Successful</h2>
-        
-          {/* Unique submission ID */}
-          <p>
-            <strong>Submission ID:</strong> {submissionId}
-          </p>
 
-          {/* Summary of what was submitted */}
+          <div style={{ textAlign: "center", marginBottom: "20px" }}>
+            <img src="/stevemadden-logo.png" alt="Steve Madden" style={{ height: "60px" }} />
+          </div>
+
+          <h2>Submission Successful</h2>
+          <p><strong>Submission ID:</strong> {submissionId}</p>
           <p>
-            Thank you for submitting data for:
-            <br />
+            Thank you for submitting data for:<br />
             <strong>
               {submittedData.businessType} | {submittedData.division} | {submittedData.year}
             </strong>
@@ -677,117 +591,29 @@ function App() {
 
           <h3>Submitted Values</h3>
 
-          {/*********************************************************************************
-            TABLE WRAPPER (Horizontal Scroll Enabled)
-            --------------------------------------------------------------------------------
-            Ensures table scrolls horizontally on small screens.
-          *********************************************************************************/}
-          <div style={{
-              maxHeight: "400px",
-              overflowY: "auto",
-              borderRadius: "12px"
-            }}>
-            {/*******************************************************************************
-              DATA TABLE
-              ------------------------------------------------------------------------------
-              Displays:
-                - Only months where data exists
-                - Quarter totals
-                - Full Year total
-            *******************************************************************************/}
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                textAlign: "center",
-                border: "1px solid #000"
-              }}
-            >
-              {/* TABLE HEADER */}
+          <div style={{ maxHeight: "400px", overflowY: "auto", borderRadius: "12px" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "center", border: "1px solid #000" }}>
               <thead>
                 <tr>
-                  <th
-                    style={{
-                      padding: "12px",
-                      backgroundColor: "#000",
-                      color: "#fff",
-                      border: "1px solid #000",
-                      position: "sticky",
-                      top: 0,
-                      zIndex: 2,
-                      boxShadow: "0 2px 5px rgba(0,0,0,0.1)"
-                    }}
-                  >Month</th>
-                  <th
-                    style={{
-                      padding: "12px",
-                      backgroundColor: "#000",
-                      color: "#fff",
-                      border: "1px solid #000",
-                      position: "sticky",
-                      top: 0,
-                      zIndex: 2,
-                      boxShadow: "0 2px 5px rgba(0,0,0,0.1)"
-                    }}
-                  >Forecast</th>
-                  <th
-                    style={{
-                      padding: "12px",
-                      backgroundColor: "#000",
-                      color: "#fff",
-                      border: "1px solid #000",
-                      position: "sticky",
-                      top: 0,
-                      zIndex: 2,
-                      boxShadow: "0 2px 5px rgba(0,0,0,0.1)"
-                    }}
-                  >Plan</th>
-                  <th
-                    style={{
-                      padding: "12px",
-                      backgroundColor: "#000",
-                      color: "#fff",
-                      border: "1px solid #000",
-                      position: "sticky",
-                      top: 0,
-                      zIndex: 2,
-                      boxShadow: "0 2px 5px rgba(0,0,0,0.1)"
-                    }}
-                  >GM %</th>
+                  {["Month", "Forecast", "Plan", "GM %"].map((h) => (
+                    <th key={h} style={{ padding: "12px", backgroundColor: "#000", color: "#fff", border: "1px solid #000", position: "sticky", top: 0, zIndex: 2, boxShadow: "0 2px 5px rgba(0,0,0,0.1)" }}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
-              {/* TABLE BODY */}
               <tbody>
-                {/***************************************************************************
-                  DISPLAY ONLY ROWS WITH DATA
-                  --------------------------------------------------------------------------
-                  Filters out completely empty months.
-                ***************************************************************************/}
                 {submittedData.months
-                  .filter(
-                    (row) =>
-                      row.forecast || row.plan || row.gm
-                  )
+                  .filter((row) => row.forecast || row.plan || row.gm)
                   .map((row) => (
                     <tr key={row.month}>
-                      <td style={{ padding: "10px",border: "1px solid #000" }}>{getMonthName(row.month)}</td>
-                      <td style={{ padding: "10px",border: "1px solid #000" }}>{row.forecast}</td>
-                      <td style={{ padding: "10px",border: "1px solid #000" }}>{row.plan}</td>
-                      <td style={{ padding: "10px",border: "1px solid #000" }}>{row.gm}</td>
+                      <td style={{ padding: "10px", border: "1px solid #000" }}>{getMonthName(row.month)}</td>
+                      <td style={{ padding: "10px", border: "1px solid #000" }}>{row.forecast}</td>
+                      <td style={{ padding: "10px", border: "1px solid #000" }}>{row.plan}</td>
+                      <td style={{ padding: "10px", border: "1px solid #000" }}>{row.gm}</td>
                     </tr>
-                ))}
+                  ))}
 
-                {/***************************************************************************
-                  CALCULATE AND DISPLAY TOTALS (INLINE FUNCTION)
-                  --------------------------------------------------------------------------
-                  Computes:
-                    - Q1, Q2, Q3, Q4
-                    - Full Year
-
-                  NOTE:
-                    This logic duplicates earlier calculation logic.
-                    In production, should be extracted to shared utility.
-                ***************************************************************************/}
                 {calculateTotals(submittedData.months).map((totalRow) => (
                   <tr key={totalRow.label} style={{ fontWeight: "bold" }}>
                     <td style={cellStyle}>{totalRow.label}</td>
@@ -799,125 +625,57 @@ function App() {
               </tbody>
             </table>
           </div>
-        <br />
-          {/*********************************************************************************
-            ACTION BUTTONS SECTION
-            --------------------------------------------------------------------------------
-            Provides:
-              - Download JSON
-              - Submit another
-              - Logout
-          *********************************************************************************/}
+          <br />
+
           <div style={{ marginTop: "20px", textAlign: "center" }}>
-            {/* Download Submitted JSON */}
             <button
               onClick={downloadJSON}
-              style={{
-                padding: "10px 25px",
-                borderRadius: "25px",
-                border: "none",
-                backgroundColor: "black",
-                color: "white",
-                cursor: "pointer",
-                marginRight: "15px"
-              }}
+              style={{ padding: "10px 25px", borderRadius: "25px", border: "none", backgroundColor: "black", color: "white", cursor: "pointer", marginRight: "15px", fontFamily: "inherit" }}
             >
               Download Submission
             </button>
-            
-            {/* Reset form and go back */}
+
             <button
               onClick={resetForm}
-              style={{
-                padding: "10px 25px",
-                borderRadius: "25px",
-                border: "none",
-                backgroundColor: "black",
-                color: "white",
-                cursor: "pointer"
-              }}
+              style={{ padding: "10px 25px", borderRadius: "25px", border: "none", backgroundColor: "black", color: "white", cursor: "pointer", fontFamily: "inherit" }}
             >
               Submit Another Response
             </button>
-            
-            {/* Logout from Microsoft */}
+
             <button
-              onClick={() => {
-                setUser(null);
-                setMode(null);
-                localStorage.removeItem("appMode");
-                window.location.href = "/.auth/logout";
-              }}
-              style={{
-                padding: "10px 25px",
-                borderRadius: "25px",
-                border: "none",
-                backgroundColor: "#999",
-                color: "white",
-                cursor: "pointer",
-                marginLeft: "15px"
-              }}
+              onClick={handleLogout}
+              style={{ padding: "10px 25px", borderRadius: "25px", border: "none", backgroundColor: "#999", color: "white", cursor: "pointer", marginLeft: "15px", fontFamily: "inherit" }}
             >
               Logout
             </button>
           </div>
-        {/* END WHITE CARD */}
         </div>
-      {/* END FULL SCREEN CONTAINER */}
       </div>
     );
   }
 
   /*****************************************************************************************
     MAIN FORM PAGE
-    ----------------------------------------------------------------------------------------
-    This is the primary data-entry screen.
-
-    Responsibilities:
-      - Capture header selection (Business Type, Division, Year)
-      - Display monthly input table
-      - Calculate and show quarterly + full year totals
-      - Validate before submission
-      - Handle logout
-      - Display confirmation modal before upload
   *****************************************************************************************/
   return (
-
-    /***************************************************************************************
-      OUTER FULL-SCREEN CONTAINER
-      --------------------------------------------------------------------------------------
-      - Covers entire viewport
-      - Displays background image
-      - Centers main card
-      - Handles fade-in animation
-    ***************************************************************************************/
     <div
       style={{
-        minHeight: "100vh", // Full viewport height
-        width: "100vw", // Full viewport width
+        minHeight: "100vh",
+        width: "100vw",
         display: "flex",
         justifyContent: "center",
-
         backgroundImage: "url('/background.jpg')",
         backgroundSize: "cover",
         backgroundRepeat: "no-repeat",
         backgroundPosition: "center",
-
         fontFamily: "'Montserrat', sans-serif",
         padding: "40px 20px",
         boxSizing: "border-box",
-
-        // Fade animation on mount
         opacity: fadeIn ? 1 : 0,
         transition: "opacity 0.4s ease, transform 0.4s ease",
         transform: fadeIn ? "translateY(0px)" : "translateY(10px)"
       }}
     >
-      {/*************************************************************************************
-        MAIN WHITE CARD CONTAINER
-        ------------------------------------------------------------------------------------
-        Contains entire form UI.
-      **************************************************************************************/}
       <div
         style={{
           background: "rgba(255,255,255,0.88)",
@@ -925,178 +683,88 @@ function App() {
           borderRadius: "20px",
           width: "1000px",
           boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
-          backdropFilter: "blur(8px)",
+          backdropFilter: "blur(8px)"
         }}
       >
-        {/***********************************************************************************
-          USER DISPLAY (TOP RIGHT)
-          ----------------------------------------------------------------------------------
-          Shows logged-in user or guest.
-        ***********************************************************************************/}
         <div style={{ textAlign: "right", marginBottom: "10px", fontSize: "14px" }}>
-          {user
-            ? `Logged in as: ${user.userDetails}`
-            : "Guest User"}
+          {user ? `Logged in as: ${user.userDetails}` : "Guest User"}
         </div>
 
-        {/***********************************************************************************
-          LOGO SECTION
-        ***********************************************************************************/}
         <div style={{ textAlign: "center", marginBottom: "20px" }}>
-          <img
-            src="/stevemadden-logo.png"
-            alt="Steve Madden"
-            style={{ height: "60px" }}
-          />
+          <img src="/stevemadden-logo.png" alt="Steve Madden" style={{ height: "60px" }} />
         </div>
 
-        {/***********************************************************************************
-          PAGE TITLE
-        ***********************************************************************************/}
-        <h2
-          style={{
-            fontSize: "2rem",
-            fontWeight: "600",
-            marginBottom: "25px",
-            letterSpacing: "0.5px"
-          }}
-        >
+        <h2 style={{ fontSize: "2rem", fontWeight: "600", marginBottom: "25px", letterSpacing: "0.5px" }}>
           Business Input
         </h2>
 
-        {/************************************************************************************
-          HEADER SELECTION SECTION
-          ----------------------------------------------------------------------------------
-          Allows user to select:
-            - Business Type
-            - Division
-            - Year
-
-          These are required before table loads.
-        ************************************************************************************/}
+        {/* BUSINESS TYPE DROPDOWN */}
         <div style={{ marginBottom: "20px" }}>
-          {/* BUSINESS TYPE DROPDOWN */}
           <label>Business Type:</label><br />
           <div style={{ position: "relative", display: "inline-block" }}></div>
-            <select
-              style={modernSelectStyle}
-              onFocus={(e) => {
-                e.target.style.border = "1px solid black";
-                e.target.style.boxShadow = "0 0 0 3px rgba(0,0,0,0.1)";
-              }}
-              onBlur={(e) => {
-                e.target.style.border = "1px solid #ddd";
-                e.target.style.boxShadow = "0 2px 6px rgba(0,0,0,0.05)";
-              }}
-              value={header.businessType}
-              onChange={(e) => {
-                const updatedHeader = {
-                  ...header,
-                  businessType: e.target.value
-                };
+          <select
+            style={modernSelectStyle}
+            onFocus={(e) => { e.target.style.border = "1px solid black"; e.target.style.boxShadow = "0 0 0 3px rgba(0,0,0,0.1)"; }}
+            onBlur={(e)  => { e.target.style.border = "1px solid #ddd";  e.target.style.boxShadow = "0 2px 6px rgba(0,0,0,0.05)"; }}
+            value={header.businessType}
+            onChange={(e) => {
+              const updatedHeader = { ...header, businessType: e.target.value };
+              setHeader(updatedHeader);
+              localStorage.setItem("businessInputDraft", JSON.stringify({ header: updatedHeader, rows }));
+            }}
+          >
+            <option value="">Select</option>
+            <option value="SAF">SAF</option>
+            <option value="Retail">Retail</option>
+          </select>
+        </div>
 
-                setHeader(updatedHeader);
-
-                // Persist draft in localStorage
-                localStorage.setItem(
-                  "businessInputDraft",
-                  JSON.stringify({
-                    header: updatedHeader,
-                    rows
-                  })
-                );
-              }}
-            >
-              <option value="">Select</option>
-              <option value="SAF">SAF</option>
-              <option value="Retail">Retail</option>
-            </select>
-          </div>
-          
-          <div style={{ marginBottom: "18px" }}>
+        <div style={{ marginBottom: "18px" }}>
           {/* DIVISION DROPDOWN */}
           <label>Division:</label><br />
           <div style={{ position: "relative", display: "inline-block" }}></div>
-            <select
-              style={modernSelectStyle}
-              onFocus={(e) => {
-                e.target.style.border = "1px solid black";
-                e.target.style.boxShadow = "0 0 0 3px rgba(0,0,0,0.1)";
-              }}
-              onBlur={(e) => {
-                e.target.style.border = "1px solid #ddd";
-                e.target.style.boxShadow = "0 2px 6px rgba(0,0,0,0.05)";
-              }}
-              value={header.division}
-              onChange={(e) => {
-                const updatedHeader = {
-                  ...header,
-                  division: e.target.value
-                };
-
-                setHeader(updatedHeader);
-
-                // Persist draft in localStorage
-                localStorage.setItem(
-                  "businessInputDraft",
-                  JSON.stringify({
-                    header: updatedHeader,
-                    rows
-                  })
-                );
-              }}
-            >
-              <option value="">Select</option>
-              <option value="F9A">F9A</option>
-              <option value="F9B">F9B</option>
-            </select>
+          <select
+            style={modernSelectStyle}
+            onFocus={(e) => { e.target.style.border = "1px solid black"; e.target.style.boxShadow = "0 0 0 3px rgba(0,0,0,0.1)"; }}
+            onBlur={(e)  => { e.target.style.border = "1px solid #ddd";  e.target.style.boxShadow = "0 2px 6px rgba(0,0,0,0.05)"; }}
+            value={header.division}
+            onChange={(e) => {
+              const updatedHeader = { ...header, division: e.target.value };
+              setHeader(updatedHeader);
+              localStorage.setItem("businessInputDraft", JSON.stringify({ header: updatedHeader, rows }));
+            }}
+          >
+            <option value="">Select</option>
+            <option value="F9A">F9A</option>
+            <option value="F9B">F9B</option>
+          </select>
 
           {/* YEAR DROPDOWN */}
           <div style={{ marginBottom: "18px" }}>
             <label>Year:</label><br />
             <div style={{ position: "relative", display: "inline-block" }}></div>
-              <select
-                style={modernSelectStyle}
-                onFocus={(e) => {
-                  e.target.style.border = "1px solid black";
-                  e.target.style.boxShadow = "0 0 0 3px rgba(0,0,0,0.1)";
-                }}
-                onBlur={(e) => {
-                  e.target.style.border = "1px solid #ddd";
-                  e.target.style.boxShadow = "0 2px 6px rgba(0,0,0,0.05)";
-                }}
-                value={header.year}
-                onChange={(e) => {
-                  const updatedHeader = {
-                    ...header,
-                    year: e.target.value
-                  };
-
-                  setHeader(updatedHeader);
-
-                  // Persist draft in localStorage
-                  localStorage.setItem(
-                    "businessInputDraft",
-                    JSON.stringify({
-                      header: updatedHeader,
-                      rows
-                    })
-                  );
-                }}
-              >
-                <option value="">Select</option>
-                <option value="2026">2026</option>
-                <option value="2027">2027</option>
-              </select>
-            </div>
+            <select
+              style={modernSelectStyle}
+              onFocus={(e) => { e.target.style.border = "1px solid black"; e.target.style.boxShadow = "0 0 0 3px rgba(0,0,0,0.1)"; }}
+              onBlur={(e)  => { e.target.style.border = "1px solid #ddd";  e.target.style.boxShadow = "0 2px 6px rgba(0,0,0,0.05)"; }}
+              value={header.year}
+              onChange={(e) => {
+                const updatedHeader = { ...header, year: e.target.value };
+                setHeader(updatedHeader);
+                localStorage.setItem("businessInputDraft", JSON.stringify({ header: updatedHeader, rows }));
+              }}
+            >
+              <option value="">Select</option>
+              <option value="2026">2026</option>
+              <option value="2027">2027</option>
+            </select>
+          </div>
 
           <br /><br />
 
           {/* LOAD TABLE BUTTON */}
           <button
-            disabled={
-              !header.businessType || !header.division || !header.year
-            }
+            disabled={!header.businessType || !header.division || !header.year}
             onClick={() => setShowTable(true)}
             style={{
               padding: "12px 28px",
@@ -1107,7 +775,8 @@ function App() {
               fontWeight: "500",
               letterSpacing: "0.5px",
               cursor: "pointer",
-              transition: "all 0.2s ease"
+              transition: "all 0.2s ease",
+              fontFamily: "inherit"
             }}
             onMouseEnter={(e) => e.target.style.transform = "scale(1.05)"}
             onMouseLeave={(e) => e.target.style.transform = "scale(1)"}
@@ -1116,394 +785,168 @@ function App() {
           </button>
         </div>
 
-      {/************************************************************************************
-          TABLE SECTION (ONLY RENDERS AFTER HEADER COMPLETE)
-        ************************************************************************************/}
-      {showTable && (
-        <>
-          <h3>
-            Entering data for: {header.businessType} | {header.division} | {header.year}
-          </h3>
+        {/* TABLE SECTION */}
+        {showTable && (
+          <>
+            <h3>
+              Entering data for: {header.businessType} | {header.division} | {header.year}
+            </h3>
 
-          <div style={{ width: "100%", 
-                        maxHeight: "400px",
-                        borderRadius: "12px",
-                        overflowY: "auto",  }}>
+            <div style={{ width: "100%", maxHeight: "400px", borderRadius: "12px", overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "center", tableLayout: "fixed" }}>
+                <thead>
+                  <tr>
+                    {["Month", "Forecast", "Plan", "GM %"].map((h) => (
+                      <th key={h} style={{ width: "25%", padding: "12px", backgroundColor: "#000", color: "#fff", position: "sticky", top: 0, zIndex: 2, boxShadow: "0 2px 5px rgba(0,0,0,0.1)" }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, index) => (
+                    <tr
+                      key={row.month}
+                      style={{ transition: "background 0.2s ease" }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "rgba(0,0,0,0.04)"}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
+                    >
+                      <td style={{ padding: "10px" }}>{getMonthName(row.month)}</td>
 
-            {/******************************************************************************
-              DATA ENTRY TABLE
-              ----------------------------------------------------------------------------
-              Displays:
-                - 12 months
-                - Forecast input
-                - Plan input
-                - GM input
-                - Auto-calculated totals
-            ******************************************************************************/}
-            <table
+                      {/* FORECAST INPUT */}
+                      <td style={{ padding: "10px" }}>
+                        <input
+                          type="text"
+                          style={{ borderRadius: "20px", padding: "6px 10px", border: "1px solid #ddd", width: "80%", transition: "all 0.2s ease", outline: "none", fontSize: "13px", textAlign: "center" }}
+                          onFocus={(e) => { e.target.style.border = "1px solid black"; e.target.style.boxShadow = "0 0 0 2px rgba(0,0,0,0.1)"; }}
+                          onBlur={(e)  => { e.target.style.border = "1px solid #ddd";  e.target.style.boxShadow = "none"; }}
+                          inputMode="decimal"
+                          value={row.forecast}
+                          onChange={(e) => { if (allowOnlyValidNumber(e.target.value)) handleRowChange(index, "forecast", e.target.value); }}
+                          onKeyDown={(e) => { if (["e","E","+","-"].includes(e.key)) e.preventDefault(); }}
+                        />
+                      </td>
+
+                      {/* PLAN INPUT */}
+                      <td style={{ padding: "10px" }}>
+                        <input
+                          type="text"
+                          style={{ borderRadius: "20px", padding: "6px 10px", border: "1px solid #ddd", width: "80%", transition: "all 0.2s ease", outline: "none", fontSize: "13px", textAlign: "center" }}
+                          onFocus={(e) => { e.target.style.border = "1px solid black"; e.target.style.boxShadow = "0 0 0 2px rgba(0,0,0,0.1)"; }}
+                          onBlur={(e)  => { e.target.style.border = "1px solid #ddd";  e.target.style.boxShadow = "none"; }}
+                          inputMode="decimal"
+                          value={row.plan}
+                          onChange={(e) => { if (allowOnlyValidNumber(e.target.value)) handleRowChange(index, "plan", e.target.value); }}
+                          onKeyDown={(e) => { if (["e","E","+","-"].includes(e.key)) e.preventDefault(); }}
+                        />
+                      </td>
+
+                      {/* GM INPUT */}
+                      <td style={{ padding: "10px" }}>
+                        <input
+                          type="text"
+                          style={{ borderRadius: "20px", padding: "6px 10px", border: "1px solid #ddd", width: "80%", transition: "all 0.2s ease", outline: "none", fontSize: "13px", textAlign: "center" }}
+                          onFocus={(e) => { e.target.style.border = "1px solid black"; e.target.style.boxShadow = "0 0 0 2px rgba(0,0,0,0.1)"; }}
+                          onBlur={(e)  => { e.target.style.border = "1px solid #ddd";  e.target.style.boxShadow = "none"; }}
+                          inputMode="decimal"
+                          value={row.gm}
+                          onChange={(e) => { if (allowOnlyValidNumber(e.target.value, 100)) handleRowChange(index, "gm", e.target.value); }}
+                          onKeyDown={(e) => { if (["e","E","+","-"].includes(e.key)) e.preventDefault(); }}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+
+                  {/* TOTAL ROWS */}
+                  {calculateTotals(rows).map((totalRow) => (
+                    <tr key={totalRow.label} style={{ fontWeight: "600", backgroundColor: "rgba(0,0,0,0.05)", borderTop: "2px solid #000" }}>
+                      <td style={{ padding: "10px" }}>{totalRow.label}</td>
+                      <td>{totalRow.forecast}</td>
+                      <td>{totalRow.plan}</td>
+                      <td>{totalRow.gm}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <br />
+
+            {/* SUBMIT BUTTON */}
+            <button
+              onClick={() => {
+                if (!hasAnyData()) {
+                  alert("Please enter at least one value before submitting.");
+                  return;
+                }
+                setShowConfirmModal(true);
+              }}
               style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                textAlign: "center",
-                tableLayout: "fixed" 
+                padding: "12px 28px",
+                borderRadius: "30px",
+                border: "none",
+                background: "linear-gradient(135deg, #000, #222)",
+                color: "white",
+                fontWeight: "500",
+                letterSpacing: "0.5px",
+                cursor: "pointer",
+                transition: "all 0.2s ease",
+                fontFamily: "inherit"
+              }}
+              onMouseEnter={(e) => e.target.style.transform = "scale(1.05)"}
+              onMouseLeave={(e) => e.target.style.transform = "scale(1)"}
+              disabled={isUploading}
+            >
+              {isUploading ? "Uploading..." : "Submit"}
+            </button>
+
+            {/* LOGOUT BUTTON */}
+            <button
+              onClick={handleLogout}
+              style={{
+                padding: "10px 25px",
+                borderRadius: "25px",
+                border: "none",
+                background: "linear-gradient(135deg, #777, #999)",
+                color: "white",
+                cursor: "pointer",
+                marginLeft: "15px",
+                fontFamily: "inherit"
               }}
             >
-              <thead>
-                <tr>
-                  <th
-                    style={{
-                      width: "25%",
-                      padding: "12px",
-                      backgroundColor: "#000",
-                      color: "#fff",
-                      position: "sticky",
-                      top: 0,
-                      zIndex: 2,
-                      boxShadow: "0 2px 5px rgba(0,0,0,0.1)"
-                    }}
-                  >Month</th>
-                  <th
-                    style={{
-                      width: "25%",
-                      padding: "12px",
-                      backgroundColor: "#000",
-                      color: "#fff",
-                      position: "sticky",
-                      top: 0,
-                      zIndex: 2,
-                      boxShadow: "0 2px 5px rgba(0,0,0,0.1)"
-                    }}
-                  >Forecast</th>
-                  <th
-                    style={{
-                      width: "25%",
-                      padding: "12px",
-                      backgroundColor: "#000",
-                      color: "#fff",
-                      position: "sticky",
-                      top: 0,
-                      zIndex: 2,
-                      boxShadow: "0 2px 5px rgba(0,0,0,0.1)"
-                    }}
-                  >Plan</th>
-                  <th
-                    style={{
-                      width: "25%",
-                      padding: "12px",
-                      backgroundColor: "#000",
-                      color: "#fff",
-                      position: "sticky",
-                      top: 0,
-                      zIndex: 2,
-                      boxShadow: "0 2px 5px rgba(0,0,0,0.1)"
-                    }}
-                  >GM %</th>
-                </tr>
-              </thead>
-            <tbody>
-              
-              {/**************************************************************************
-                  MONTHLY ROWS
-                  ------------------------------------------------------------------------
-                  Each row:
-                    - Displays month name
-                    - Allows numeric input
-                    - Restricts invalid characters
-                    - Calls handleRowChange on update
-                ***************************************************************************/}
-              {rows.map((row, index) => (
-                <tr
-                  key={row.month}
-                  style={{ transition: "background 0.2s ease" }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.backgroundColor = "rgba(0,0,0,0.04)")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.backgroundColor = "transparent")
-                  }
-                >
-                  <td style={{ padding: "10px" }}>{getMonthName(row.month)}</td>
+              Logout
+            </button>
 
-                  {/* FORECAST INPUT */}
-                  <td style={{ padding: "10px" }}>
-                    <input
-                      type="text"
-                      style={{
-                        borderRadius: "20px",
-                        padding: "6px 10px",
-                        border: "1px solid #ddd",
-                        width: "80%",
-                        transition: "all 0.2s ease",
-                        outline: "none",
-                        fontSize: "13px",
-                        textAlign: "center",
-                      }}
-                      onFocus={(e) => {
-                        e.target.style.border = "1px solid black";
-                        e.target.style.boxShadow = "0 0 0 2px rgba(0,0,0,0.1)";
-                      }}
-                      onBlur={(e) => {
-                        e.target.style.border = "1px solid #ddd";
-                        e.target.style.boxShadow = "none";
-                      }}
-                      inputMode="decimal"
-                      value={row.forecast}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (allowOnlyValidNumber(val)) {
-                          handleRowChange(index, "forecast", val);
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (["e", "E", "+", "-"].includes(e.key)) {
-                          e.preventDefault();
-                        }
-                      }}
-                    />
-                  </td>
-
-                  {/* PLAN INPUT */}
-                  <td style={{ padding: "10px" }}>
-                    <input
-                      type="text"
-                      style={{
-                        borderRadius: "20px",
-                        padding: "6px 10px",
-                        border: "1px solid #ddd",
-                        width: "80%",
-                        transition: "all 0.2s ease",
-                        outline: "none",
-                        fontSize: "13px",
-                        textAlign: "center",
-                      }}
-                      onFocus={(e) => {
-                        e.target.style.border = "1px solid black";
-                        e.target.style.boxShadow = "0 0 0 2px rgba(0,0,0,0.1)";
-                      }}
-                      onBlur={(e) => {
-                        e.target.style.border = "1px solid #ddd";
-                        e.target.style.boxShadow = "none";
-                      }}
-                      inputMode="decimal"
-                      value={row.plan}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (allowOnlyValidNumber(val)) {
-                          handleRowChange(index, "plan", val);
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (["e", "E", "+", "-"].includes(e.key)) {
-                          e.preventDefault();
-                        }
-                      }}
-                    />
-                  </td>
-
-                  {/* GM INPUT (MAX 100%) */}
-                  <td style={{ padding: "10px" }}>
-                    <input
-                      type="text"
-                      style={{
-                        borderRadius: "20px",
-                        padding: "6px 10px",
-                        border: "1px solid #ddd",
-                        width: "80%",
-                        transition: "all 0.2s ease",
-                        outline: "none",
-                        fontSize: "13px",
-                        textAlign: "center",
-                      }}
-                      onFocus={(e) => {
-                        e.target.style.border = "1px solid black";
-                        e.target.style.boxShadow = "0 0 0 2px rgba(0,0,0,0.1)";
-                      }}
-                      onBlur={(e) => {
-                        e.target.style.border = "1px solid #ddd";
-                        e.target.style.boxShadow = "none";
-                      }}
-                      inputMode="decimal"
-                      value={row.gm}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (allowOnlyValidNumber(val, 100)) {
-                          handleRowChange(index, "gm", val);
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (["e", "E", "+", "-"].includes(e.key)) {
-                          e.preventDefault();
-                        }
-                      }}
-                    />
-                  </td>
-                </tr>
-              ))}
-
-              {/**************************************************************************
-                  TOTAL ROWS
-                  ------------------------------------------------------------------------
-                  Uses shared utility:
-                      calculateTotals(rows)
-
-                  Displays:
-                      - Q1
-                      - Q2
-                      - Q3
-                      - Q4
-                      - Full Year
-                ***************************************************************************/}
-              {calculateTotals(rows).map((totalRow) => (
-                <tr
-                  key={totalRow.label}
-                  style={{
-                    fontWeight: "600",
-                    backgroundColor: "rgba(0,0,0,0.05)",
-                    borderTop: "2px solid #000"
-                  }}
-                >
-                  <td style={{ padding: "10px" }}>{totalRow.label}</td>
-                  <td>{totalRow.forecast}</td>
-                  <td>{totalRow.plan}</td>
-                  <td>{totalRow.gm}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-          <br />
-
-          {/**************************************************************************
-              SUBMIT BUTTON
-              ------------------------------------------------------------------------
-              Validates:
-                - At least one value entered
-              Then:
-                - Opens confirmation modal
-            ***************************************************************************/}
-          <button
-            onClick={() => {
-              if (!hasAnyData()) {
-                alert("Please enter at least one value before submitting.");
-                return;
-              }
-              setShowConfirmModal(true);
-            }}
-            style={{
-              padding: "12px 28px",
-              borderRadius: "30px",
-              border: "none",
-              background: "linear-gradient(135deg, #000, #222)",
-              color: "white",
-              fontWeight: "500",
-              letterSpacing: "0.5px",
-              cursor: "pointer",
-              transition: "all 0.2s ease"
-            }}
-            onMouseEnter={(e) => e.target.style.transform = "scale(1.05)"}
-            onMouseLeave={(e) => e.target.style.transform = "scale(1)"}
-            disabled={isUploading}
-          >
-            {isUploading ? "Uploading..." : "Submit"}
-          </button>
-
-          {/* LOGOUT BUTTON */}
-          <button
-            onClick={() => {
-              setUser(null);
-              setMode(null);
-              localStorage.removeItem("appMode");
-              window.location.href = "/.auth/logout";
-            }}
-            style={{
-              padding: "10px 25px",
-              borderRadius: "25px",
-              border: "none",
-              background: "linear-gradient(135deg, #777, #999)",
-              color: "white",
-              cursor: "pointer",
-              marginLeft: "15px"
-            }}
-          >
-            Logout
-          </button>
-        
-          {/**************************************************************************
-            CONFIRMATION MODAL
-            ------------------------------------------------------------------------
-            Displays before actual upload.
-
-            User must confirm submission.
-          ***************************************************************************/}
-          {showConfirmModal && (
-            <div
-              style={{
-                position: "fixed",
-                inset: 0, // shorthand for top:0, left:0, right:0, bottom:0
-                backgroundColor: "rgba(0,0,0,0.5)",
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                zIndex: 9999,
-                backdropFilter: "blur(4px)"
-              }}
-            >
+            {/* CONFIRMATION MODAL */}
+            {showConfirmModal && (
               <div
-                style={{
-                  width: "90%",
-                  maxWidth: "420px",
-                  background: "white",
-                  padding: "35px 30px",
-                  borderRadius: "20px",
-                  boxShadow: "0 25px 70px rgba(0,0,0,0.25)",
-                  textAlign: "center",
-                  animation: "fadeScaleIn 0.2s ease"
-                }}
+                style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999, backdropFilter: "blur(4px)" }}
               >
-                <h3 style={{ marginBottom: "15px" }}>
-                  Confirm Submission
-                </h3>
-
-                <p style={{ marginBottom: "25px", fontSize: "14px", color: "#555" }}>
-                  Are you sure you want to submit this data?
-                </p>
-
-                <div style={{ display: "flex", justifyContent: "center", gap: "15px" }}>
-                  <button
-                    onClick={() => setShowConfirmModal(false)}
-                    style={{
-                      padding: "8px 22px",
-                      borderRadius: "25px",
-                      border: "1px solid black",
-                      background: "white",
-                      cursor: "pointer"
-                    }}
-                  >
-                    Cancel
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setShowConfirmModal(false);
-                      upload();
-                    }}
-                    style={{
-                      padding: "8px 22px",
-                      borderRadius: "25px",
-                      border: "none",
-                      background: "black",
-                      color: "white",
-                      cursor: "pointer"
-                    }}
-                  >
-                    Confirm
-                  </button>
+                <div
+                  style={{ width: "90%", maxWidth: "420px", background: "white", padding: "35px 30px", borderRadius: "20px", boxShadow: "0 25px 70px rgba(0,0,0,0.25)", textAlign: "center" }}
+                >
+                  <h3 style={{ marginBottom: "15px", fontFamily: "inherit" }}>Confirm Submission</h3>
+                  <p style={{ marginBottom: "25px", fontSize: "14px", color: "#555" }}>
+                    Are you sure you want to submit this data?
+                  </p>
+                  <div style={{ display: "flex", justifyContent: "center", gap: "15px" }}>
+                    <button
+                      onClick={() => setShowConfirmModal(false)}
+                      style={{ padding: "8px 22px", borderRadius: "25px", border: "1px solid black", background: "white", cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => { setShowConfirmModal(false); upload(); }}
+                      style={{ padding: "8px 22px", borderRadius: "25px", border: "none", background: "black", color: "white", cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      Confirm
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-        </>
-      )}
+            )}
+          </>
+        )}
       </div>
     </div>
   );
