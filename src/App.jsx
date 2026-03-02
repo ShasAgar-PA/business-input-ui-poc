@@ -560,7 +560,7 @@ function App() {
           <button
             onClick={() => {
               setMode("guest");
-              setUserRole("admin"); // ← TEMP for testing — revert to "guest" before deploy
+              setUserRole("choose"); // ← TEMP for testing — revert to "guest" before deploy // ← show choice screen
               localStorage.setItem("appMode", "guest");
             }}
             style={{
@@ -599,6 +599,60 @@ function App() {
             }}
           >
             Login with Microsoft
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === "guest" && userRole === "choose") {
+    return (
+      <div style={{
+        minHeight: "100vh", width: "100vw",
+        display: "flex", justifyContent: "center", alignItems: "center",
+        backgroundImage: "url('/background.jpg')",
+        backgroundSize: "cover", backgroundPosition: "center",
+        fontFamily: "'Montserrat', sans-serif"
+      }}>
+        <div style={{
+          background: "var(--login-card-bg)",
+          backdropFilter: "blur(8px)",
+          padding: "50px", borderRadius: "20px",
+          width: "400px", textAlign: "center",
+          boxShadow: "var(--shadow-card)"
+        }}>
+          <img src="/stevemadden-logo.png" alt="Steve Madden" style={{ height: "60px", marginBottom: "20px" }} />
+
+          <h2 style={{ color: "var(--login-title-color)", fontSize: "20px", marginBottom: "8px" }}>
+            Where would you like to go?
+          </h2>
+          <p style={{ color: "var(--text-muted)", fontSize: "13px", marginBottom: "28px" }}>
+            You are signed in as Guest
+          </p>
+
+          <button
+            onClick={() => setUserRole("editor")}
+            style={{
+              padding: "11px 25px", borderRadius: "25px", border: "none",
+              backgroundColor: "var(--btn-primary-bg)", color: "var(--btn-primary-text)",
+              cursor: "pointer", width: "100%", fontFamily: "inherit",
+              fontSize: "14px", fontWeight: "600", marginBottom: "12px"
+            }}
+          >
+            Enter Data
+          </button>
+
+          <button
+            onClick={() => setUserRole("admin")}
+            style={{
+              padding: "11px 25px", borderRadius: "25px",
+              border: "1px solid var(--login-btn-ms-border)",
+              backgroundColor: "var(--login-btn-ms-bg)", color: "var(--login-btn-ms-text)",
+              cursor: "pointer", width: "100%", fontFamily: "inherit",
+              fontSize: "14px", fontWeight: "600"
+            }}
+          >
+            Admin Console
           </button>
         </div>
       </div>
